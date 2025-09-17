@@ -5,6 +5,7 @@
 # 3. Build and deploy the documentation
 #====================================================================================================
 name: Build Docs and Publish to gh-pages
+#checkov:skip=CKV_GHA_7:workflow_dispatch inputs required for documentation versioning - controlled environment
 on:
   #push:
   #  branches:
@@ -54,7 +55,7 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Deploy Docs
