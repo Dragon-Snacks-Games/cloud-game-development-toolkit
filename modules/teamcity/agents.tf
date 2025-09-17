@@ -22,7 +22,7 @@ resource "aws_ecs_task_definition" "teamcity_agent" {
       cpu       = each.value.cpu
       memory    = each.value.memory
       essential = true
-      environment = [
+      environment = concat([
         {
           name  = "SERVER_URL"
           value = "http://teamcity-server.teamcity-namespace:8111"
@@ -30,9 +30,9 @@ resource "aws_ecs_task_definition" "teamcity_agent" {
         {
           name  = "AGENT_NAME"
           value = "${each.key}-agent"
-        },
-
-      ]
+        }
+      ], local.plastic_env)
+      secrets = concat(local.plastic_secrets, local.steam_secrets)
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -110,6 +110,26 @@ resource "aws_vpc_security_group_ingress_rule" "teamcity_agent_inbound" {
   ip_protocol                  = "TCP"
 }
 
+# SECURITY GROUP FOR TEAMCITY AGENT TO ALLOW TEAMCITY SERVICE
+resource "aws_vpc_security_group_ingress_rule" "teamcity_service_inbound_to_agent" {
+  security_group_id            = aws_security_group.teamcity_agent_sg.id
+  description                  = "Allow inbound traffic from Teamcity Service"
+  referenced_security_group_id = aws_security_group.teamcity_service_sg.id
+  from_port                    = -1 # Allow all ports for ephemeral responses
+  to_port                      = -1
+  ip_protocol                  = "-1" # Allow all protocols
+}
+
+# SECURITY GROUP EGRESS FOR TEAMCITY SERVICE TO TEAMCITY AGENT
+resource "aws_vpc_security_group_egress_rule" "teamcity_service_outbound_to_agent" {
+  security_group_id            = aws_security_group.teamcity_service_sg.id
+  description                  = "Allow outbound traffic to Teamcity Agent"
+  referenced_security_group_id = aws_security_group.teamcity_agent_sg.id
+  from_port                    = -1 # Allow all ports
+  to_port                      = -1
+  ip_protocol                  = "-1" # Allow all protocols
+}
+
 #################################
 #### IAM ROLES AND POLICIES #####
 #################################
@@ -164,6 +184,27 @@ resource "aws_iam_role_policy_attachment" "teamcity_agent_default_role_policy_at
   policy_arn = aws_iam_policy.teamcity_agent_default_policy.arn
 }
 
+data "aws_iam_policy_document" "teamcity_agent_execution_policy" {
+  statement {
+    sid    = "SecretsManager"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:DescribeSecret"
+    ]
+    resources = compact([
+      data.aws_secretsmanager_secret_version.plastic_user.arn,
+      var.steam_ssfn_secret_id != null ? data.aws_secretsmanager_secret_version.steam_ssfn[0].arn : ""
+    ])
+  }
+}
+
+resource "aws_iam_policy" "teamcity_agent_execution_policy" {
+  name   = "teamcity-agent-execution-policy"
+  policy = data.aws_iam_policy_document.teamcity_agent_execution_policy.json
+}
+
+
 resource "aws_iam_role" "teamcity_agent_task_execution_role" {
   name               = "teamcity-agent-task-execution-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_trust_relationship.json
@@ -174,6 +215,11 @@ resource "aws_iam_role_policy_attachment" "teamcity_agent_task_execution_default
   #checkov:skip=CKV_AWS_158: CW Log Group does not need to be encrypted
   role       = aws_iam_role.teamcity_agent_task_execution_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "teamcity_agent_task_execution_secrets_policy" {
+  role       = aws_iam_role.teamcity_agent_task_execution_role.name
+  policy_arn = aws_iam_policy.teamcity_agent_execution_policy.arn
 }
 
 resource "aws_cloudwatch_log_group" "teamcity_agent" {

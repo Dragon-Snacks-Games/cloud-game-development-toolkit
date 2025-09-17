@@ -22,6 +22,12 @@ variable "environment" {
   default     = "dev"
 }
 
+variable "image" {
+  type        = string
+  description = "The docker image to use for the TeamCity server container."
+  default     = "jetbrains/teamcity-server:latest"
+}
+
 variable "debug" {
   type        = bool
   description = "Set this flag to enable ECS execute permissions on the TeamCity server container and force new service deployments on Terraform apply."
@@ -132,18 +138,12 @@ variable "efs_encryption_enabled" {
 ########################################
 # Load Balancing
 ########################################
-variable "create_external_alb" {
-  type        = bool
-  description = "Set this flag to true to create an external load balancer for TeamCity."
-  default     = true
-}
-
 variable "alb_subnets" {
   type        = list(string)
   description = "The subnets in which the ALB will be deployed"
 
   validation {
-    condition     = var.create_external_alb == true && length(var.alb_subnets) > 0
+    condition     = length(var.alb_subnets) > 0
     error_message = "The alb_subnets variable must be set if create_external_alb is true."
   }
   default = []
@@ -154,7 +154,7 @@ variable "alb_certificate_arn" {
   description = "The ARN of the SSL certificate to use for the ALB"
 
   validation {
-    condition     = var.create_external_alb == true && var.alb_certificate_arn != null
+    condition     = var.alb_certificate_arn != null
     error_message = "The alb_certificate_arn variable must be set if create_external_alb is true."
   }
   default = null
@@ -243,4 +243,34 @@ variable "build_farm_config" {
 variable "agent_log_group_retention_in_days" {
   type    = number
   default = 7
+}
+
+variable "create_aws_connection_role" {
+  type        = bool
+  description = "Set to true to create a dedicated IAM role for the TeamCity AWS connection. This role will have permissions to manage ECS tasks."
+  default     = true
+}
+
+
+########################################
+### PlasticSCM Configuration
+########################################
+variable "plastic_user_secret_id" {
+  type        = string
+  description = "AWS Secrets Manager secret ID for PlasticSCM username and password"
+  default     = "UPDATE_IN_SECRETS_MANAGER"
+}
+
+variable "plastic_server_url" {
+  type        = string
+  description = "PlasticSCM server URL"
+}
+
+########################################
+### Steam Content Builder Configuration
+########################################
+variable "steam_ssfn_secret_id" {
+  type        = string
+  description = "AWS Secrets Manager secret ID or ARN containing the Steam config.vdf content to expose as STEAM_SSFN_CONTENT. If null, no env var will be set."
+  default     = null
 }

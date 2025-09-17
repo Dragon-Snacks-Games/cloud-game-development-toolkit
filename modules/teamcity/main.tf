@@ -70,14 +70,18 @@ resource "aws_ecs_task_definition" "teamcity_task_definition" {
       ]
 
       # Combine the lists
-      environment = concat(local.base_env, local.password_env)
+      environment = concat(local.base_env, local.password_env, local.plastic_env)
 
-      secrets = var.database_connection_string == null ? [
-        {
-          name      = "TEAMCITY_DB_PASSWORD"
-          valueFrom = "${aws_rds_cluster.teamcity_db_cluster[0].master_user_secret[0].secret_arn}:password::"
-        }
-      ] : []
+      secrets = concat(
+        var.database_connection_string == null ? [
+          {
+            name      = "TEAMCITY_DB_PASSWORD"
+            valueFrom = "${aws_rds_cluster.teamcity_db_cluster[0].master_user_secret[0].secret_arn}:password::"
+          }
+        ] : [],
+        local.plastic_secrets,
+        local.steam_secrets
+      )
     }
   ])
   tags = {
@@ -126,13 +130,16 @@ resource "aws_ecs_service" "teamcity" {
     subnets         = var.service_subnets
     security_groups = [aws_security_group.teamcity_service_sg.id]
   }
+
   dynamic "load_balancer" {
-    for_each = var.create_external_alb ? [1] : []
+    for_each = {
+      "external" = aws_lb_target_group.teamcity_target_group.arn,
+      "internal" = aws_lb_target_group.teamcity_internal_target_group.arn
+    }
     content {
-      target_group_arn = aws_lb_target_group.teamcity_target_group[0].arn
+      target_group_arn = load_balancer.value
       container_name   = var.container_name
       container_port   = var.container_port
-
     }
   }
 
@@ -222,30 +229,66 @@ resource "aws_vpc_security_group_ingress_rule" "service_db" {
 # TeamCity ALB security group
 resource "aws_security_group" "teamcity_alb_sg" {
   #checkov:skip=CKV2_AWS_5:SG is attached to TeamCity service ALB
-  count       = var.create_external_alb ? 1 : 0
   name        = "${local.name_prefix}-alb-sg"
   vpc_id      = var.vpc_id
   description = "TeamCity ALB security group"
   tags        = local.tags
 }
 
-# Ingress rule for HTTP traffic from ALB to service
-resource "aws_vpc_security_group_ingress_rule" "service_inbound_alb" {
-  count                        = var.create_external_alb ? 1 : 0
+# TeamCity internal ALB security group
+resource "aws_security_group" "teamcity_internal_alb_sg" {
+  #checkov:skip=CKV2_AWS_5:SG is attached to TeamCity service internal ALB
+  name        = "${local.name_prefix}-internal-alb-sg"
+  vpc_id      = var.vpc_id
+  description = "TeamCity Internal ALB security group"
+  tags        = local.tags
+}
+
+# Ingress rule for HTTPS traffic from within the VPC to the internal ALB
+resource "aws_vpc_security_group_ingress_rule" "internal_alb_inbound_https" {
+  security_group_id = aws_security_group.teamcity_internal_alb_sg.id
+  description       = "Allow inbound HTTPS traffic from within the VPC"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "TCP"
+  cidr_ipv4         = data.aws_vpc.teamcity[0].cidr_block
+}
+
+# Ingress rule for HTTPS traffic from internal ALB to service
+resource "aws_vpc_security_group_ingress_rule" "service_inbound_internal_alb" {
   security_group_id            = aws_security_group.teamcity_service_sg.id
-  referenced_security_group_id = aws_security_group.teamcity_alb_sg[0].id
-  description                  = "Allow inbound HTTP traffic from ALB to service containers"
+  referenced_security_group_id = aws_security_group.teamcity_internal_alb_sg.id
+  description                  = "Allow inbound HTTPS traffic from internal ALB to service containers"
   from_port                    = var.container_port
   to_port                      = var.container_port
   ip_protocol                  = "TCP"
 }
 
-# Egress rule for HTTP traffic from ALB to service
-resource "aws_vpc_security_group_egress_rule" "alb_outbound_service" {
-  count                        = var.create_external_alb ? 1 : 0
-  security_group_id            = aws_security_group.teamcity_alb_sg[0].id
+# Ingress rule for HTTPS traffic from ALB to service
+resource "aws_vpc_security_group_ingress_rule" "service_inbound_alb" {
+  security_group_id            = aws_security_group.teamcity_service_sg.id
+  referenced_security_group_id = aws_security_group.teamcity_alb_sg.id
+  description                  = "Allow inbound HTTPS traffic from ALB to service containers"
+  from_port                    = var.container_port
+  to_port                      = var.container_port
+  ip_protocol                  = "TCP"
+}
+
+# Egress rule for HTTPS traffic from internal ALB to service
+resource "aws_vpc_security_group_egress_rule" "internal_alb_outbound_service" {
+  security_group_id            = aws_security_group.teamcity_internal_alb_sg.id
   referenced_security_group_id = aws_security_group.teamcity_service_sg.id
-  description                  = "Allow outbound HTTP traffic from ALB to service containers"
+  description                  = "Allow outbound HTTPS traffic from internal ALB to service containers"
+  from_port                    = var.container_port
+  to_port                      = var.container_port
+  ip_protocol                  = "TCP"
+}
+
+# Egress rule for HTTPS traffic from ALB to service
+resource "aws_vpc_security_group_egress_rule" "alb_outbound_service" {
+  security_group_id            = aws_security_group.teamcity_alb_sg.id
+  referenced_security_group_id = aws_security_group.teamcity_service_sg.id
+  description                  = "Allow outbound HTTPS traffic from ALB to service containers"
   from_port                    = var.container_port
   to_port                      = var.container_port
   ip_protocol                  = "TCP"
@@ -257,6 +300,11 @@ resource "aws_vpc_security_group_egress_rule" "service_outbound_internet" {
   description       = "Allow outbound internet access from TeamCity service containers"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
+}
+
+data "aws_vpc" "teamcity" {
+  count = var.vpc_id != null ? 1 : 0
+  id    = var.vpc_id
 }
 
 #############################################
@@ -341,15 +389,86 @@ resource "aws_iam_role_policy_attachment" "teamcity_default_role" {
   policy_arn = aws_iam_policy.teamcity_default_policy.arn
 }
 
+data "aws_iam_policy_document" "teamcity_ecs_plugin_policy" {
+  statement {
+    sid    = "TeamCityECSPlugin"
+    effect = "Allow"
+    actions = [
+      "ecs:DescribeClusters",
+      "ecs:DescribeTaskDefinition",
+      "ecs:DescribeTasks",
+      "ecs:ListClusters",
+      "ecs:ListTaskDefinitions",
+      "ecs:ListTasks",
+      "ecs:RunTask",
+      "ecs:StopTask",
+      "cloudwatch:GetMetricStatistics"
+    ]
+    resources = [
+      "*"
+    ]
+  }
+
+  statement {
+    sid    = "TeamCityECSPassRole"
+    effect = "Allow"
+    actions = [
+      "iam:PassRole"
+    ]
+    resources = [
+      aws_iam_role.teamcity_agent_default_role.arn,
+      aws_iam_role.teamcity_agent_task_execution_role.arn
+    ]
+  }
+}
+
+resource "aws_iam_policy" "teamcity_ecs_plugin_policy" {
+  name        = "teamcity-ecs-plugin-policy"
+  description = "Policy granting permissions for TeamCity ECS plugin."
+  policy      = data.aws_iam_policy_document.teamcity_ecs_plugin_policy.json
+}
+
+resource "aws_iam_role_policy_attachment" "teamcity_ecs_plugin_policy" {
+  role       = aws_iam_role.teamcity_default_role.name
+  policy_arn = aws_iam_policy.teamcity_ecs_plugin_policy.arn
+}
+
+data "aws_iam_policy_document" "teamcity_aws_connection_assume_role_policy" {
+  count = var.create_aws_connection_role ? 1 : 0
+  statement {
+    effect = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_role.teamcity_default_role.arn]
+    }
+  }
+}
+
+resource "aws_iam_role" "teamcity_aws_connection_role" {
+  count              = var.create_aws_connection_role ? 1 : 0
+  name               = "teamcity-aws-connection-role"
+  assume_role_policy = data.aws_iam_policy_document.teamcity_aws_connection_assume_role_policy[0].json
+  tags               = local.tags
+}
+
+resource "aws_iam_role_policy_attachment" "teamcity_aws_connection_role_ecs_plugin" {
+  count      = var.create_aws_connection_role ? 1 : 0
+  role       = aws_iam_role.teamcity_aws_connection_role[0].name
+  policy_arn = aws_iam_policy.teamcity_ecs_plugin_policy.arn
+}
+
 data "aws_iam_policy_document" "teamcity_execution_database_policy" {
   count = var.database_connection_string == null ? 1 : 0
   statement {
     sid     = "SecretsManager"
     effect  = "Allow"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      aws_rds_cluster.teamcity_db_cluster[0].master_user_secret[0].secret_arn
-    ]
+    actions = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+    resources = compact([
+      aws_rds_cluster.teamcity_db_cluster[0].master_user_secret[0].secret_arn,
+      data.aws_secretsmanager_secret_version.plastic_user.arn,
+      var.steam_ssfn_secret_id != null ? data.aws_secretsmanager_secret_version.steam_ssfn[0].arn : ""
+    ])
   }
 }
 
@@ -388,9 +507,8 @@ resource "aws_cloudwatch_log_group" "teamcity_log_group" {
 
 # Load Balancer for TeamCity Service
 resource "aws_lb" "teamcity_external_lb" {
-  count              = var.create_external_alb ? 1 : 0
   name               = "${local.name_prefix}-lb"
-  security_groups    = [aws_security_group.teamcity_alb_sg[0].id]
+  security_groups    = [aws_security_group.teamcity_alb_sg.id]
   load_balancer_type = "application"
   internal           = false
   subnets            = var.alb_subnets
@@ -416,10 +534,22 @@ resource "aws_lb" "teamcity_external_lb" {
   tags                       = local.tags
 }
 
+# Load Balancer for TeamCity Service (Internal)
+resource "aws_lb" "teamcity_internal_lb" {
+  name               = "${local.name_prefix}-internal-lb"
+  security_groups    = [aws_security_group.teamcity_internal_alb_sg.id]
+  load_balancer_type = "application"
+  internal           = true
+  subnets            = var.service_subnets # Internal ALB in private subnets
+
+  drop_invalid_header_fields = true
+  tags                       = local.tags
+}
+
+
 # TeamCity target group for ALB
 resource "aws_lb_target_group" "teamcity_target_group" {
   #checkov:skip=CKV_AWS_378: Using ALB for TLS termination
-  count       = var.create_external_alb ? 1 : 0
   name        = "${local.name_prefix}-tg"
   port        = var.container_port
   protocol    = "HTTP"
@@ -440,17 +570,53 @@ resource "aws_lb_target_group" "teamcity_target_group" {
   tags = local.tags
 }
 
+# TeamCity target group for Internal ALB
+resource "aws_lb_target_group" "teamcity_internal_target_group" {
+  #checkov:skip=CKV_AWS_378: Using ALB for TLS termination
+  name        = "${local.name_prefix}-internal-tg"
+  port        = var.container_port
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    path                = "/healthCheck/healthy"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 5
+    unhealthy_threshold = 2
+    port                = var.container_port
+    protocol            = "HTTP"
+    matcher             = "200"
+  }
+  tags = local.tags
+}
+
 # ALB HTTPS Listener
 resource "aws_lb_listener" "teamcity_listener" {
-  count             = var.create_external_alb ? 1 : 0
-  load_balancer_arn = aws_lb.teamcity_external_lb[0].arn
+  load_balancer_arn = aws_lb.teamcity_external_lb.arn
   port              = "443"
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
   certificate_arn   = var.alb_certificate_arn
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.teamcity_target_group[0].arn
+    target_group_arn = aws_lb_target_group.teamcity_target_group.arn
+  }
+  tags = local.tags
+}
+
+# Internal ALB HTTPS Listener
+resource "aws_lb_listener" "teamcity_internal_listener" {
+  load_balancer_arn = aws_lb.teamcity_internal_lb.arn
+  port              = "443"
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = var.alb_certificate_arn
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.teamcity_internal_target_group.arn
   }
   tags = local.tags
 }

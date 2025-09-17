@@ -10,7 +10,8 @@ locals {
   database_master_password   = var.database_master_password != null ? var.database_master_password : null
 
   # Docker image to use for TeamCity Server
-  image = "jetbrains/teamcity-server"
+  image = var.image
+
 
   # EFS information
   efs_file_system_id  = var.efs_id != null ? var.efs_id : aws_efs_file_system.teamcity_efs_file_system[0].id
