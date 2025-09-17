@@ -274,3 +274,15 @@ variable "steam_ssfn_secret_id" {
   description = "AWS Secrets Manager secret ID or ARN containing the Steam config.vdf content to expose as STEAM_SSFN_CONTENT. If null, no env var will be set."
   default     = null
 }
+
+variable "create_steam_auth" {
+  description = "Set to true to create a new (empty) Secrets Manager secret for Steam SSFN authentication. The secret's value must be manually set after creation."
+  type        = bool
+  default     = false
+}
+
+variable "steam_secret_name" {
+  description = "The name for the newly created Steam SSFN secret if `create_steam_auth` is true. Defaults to '<name_prefix>-steam-ssfn-secret'."
+  type        = string
+  default     = null
+}

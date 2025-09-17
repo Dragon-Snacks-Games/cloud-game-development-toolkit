@@ -50,6 +50,7 @@ resource "aws_ecs_task_definition" "teamcity_task_definition" {
           name          = "teamcity-server"
           containerPort = var.container_port
           hostPort      = var.container_port
+          protocol      = "tcp"
         }
       ]
       logConfiguration = {
@@ -464,11 +465,9 @@ data "aws_iam_policy_document" "teamcity_execution_database_policy" {
     sid     = "SecretsManager"
     effect  = "Allow"
     actions = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
-    resources = compact([
-      aws_rds_cluster.teamcity_db_cluster[0].master_user_secret[0].secret_arn,
-      data.aws_secretsmanager_secret_version.plastic_user.arn,
-      var.steam_ssfn_secret_id != null ? data.aws_secretsmanager_secret_version.steam_ssfn[0].arn : ""
-    ])
+    resources = [
+      aws_rds_cluster.teamcity_db_cluster[0].master_user_secret[0].secret_arn
+    ]
   }
 }
 
@@ -480,9 +479,64 @@ resource "aws_iam_policy" "teamcity_execution_database_policy" {
 
 }
 
+# Separate policies for TeamCity server access to Plastic and Steam secrets
+# This avoids mixing application secrets with the database access policy
+
+# Plastic secret access (optional)
+data "aws_iam_policy_document" "teamcity_server_plastic_secrets_policy" {
+  count = var.plastic_user_secret_id != null ? 1 : 0
+  statement {
+    sid     = "SecretsManagerPlastic"
+    effect  = "Allow"
+    actions = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+    resources = [
+      data.aws_secretsmanager_secret_version.plastic_user.arn
+    ]
+  }
+}
+
+resource "aws_iam_policy" "teamcity_server_plastic_secrets_policy" {
+  count       = var.plastic_user_secret_id != null ? 1 : 0
+  name        = "teamcity-server-plastic-secrets-policy"
+  description = "Policy granting TeamCity server access to Plastic secrets."
+  policy      = data.aws_iam_policy_document.teamcity_server_plastic_secrets_policy[0].json
+}
+
+# Steam SSFN secret access (optional)
+data "aws_iam_policy_document" "teamcity_server_steam_secrets_policy" {
+  count = local.steam_ssfn_secret_arn != null ? 1 : 0
+  statement {
+    sid     = "SecretsManagerSteam"
+    effect  = "Allow"
+    actions = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+    resources = [
+      local.steam_ssfn_secret_arn
+    ]
+  }
+}
+
+resource "aws_iam_policy" "teamcity_server_steam_secrets_policy" {
+  count       = local.steam_ssfn_secret_arn != null ? 1 : 0
+  name        = "teamcity-server-steam-secrets-policy"
+  description = "Policy granting TeamCity server access to Steam SSFN secret."
+  policy      = data.aws_iam_policy_document.teamcity_server_steam_secrets_policy[0].json
+}
+
 resource "aws_iam_role" "teamcity_task_execution_role" {
   name               = "teamcity-task-execution-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_trust_relationship.json
+}
+
+resource "aws_iam_role_policy_attachment" "teamcity_task_execution_server_plastic_secrets_policy" {
+  count      = var.plastic_user_secret_id != null ? 1 : 0
+  role       = aws_iam_role.teamcity_task_execution_role.name
+  policy_arn = aws_iam_policy.teamcity_server_plastic_secrets_policy[0].arn
+}
+
+resource "aws_iam_role_policy_attachment" "teamcity_task_execution_server_steam_secrets_policy" {
+  count      = local.steam_ssfn_secret_arn != null ? 1 : 0
+  role       = aws_iam_role.teamcity_task_execution_role.name
+  policy_arn = aws_iam_policy.teamcity_server_steam_secrets_policy[0].arn
 }
 
 resource "aws_iam_role_policy_attachment" "teamcity_task_execution_database_policy" {
@@ -496,6 +550,36 @@ resource "aws_iam_role_policy_attachment" "teamcity_task_execution_default_polic
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# Allow ECS task execution role to read SSM parameter when Steam auth is created and AWS connection role is enabled
+# This addresses cases where ECS attempts to resolve the secret via SSM Parameter Store using GetParameters
+# and needs explicit permission on the parameter name (e.g., teamcity-steam-ssfn-secret).
+data "aws_iam_policy_document" "teamcity_task_execution_ssm_policy" {
+  count = var.create_aws_connection_role && var.create_steam_auth ? 1 : 0
+  statement {
+    sid     = "AllowReadSteamSSFNParameter"
+    effect  = "Allow"
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters"
+    ]
+    resources = [
+      "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/${local.steam_ssfn_secret_name}"
+    ]
+  }
+}
+
+resource "aws_iam_policy" "teamcity_task_execution_ssm_policy" {
+  count       = var.create_aws_connection_role && var.create_steam_auth ? 1 : 0
+  name        = "teamcity-task-execution-ssm-policy"
+  description = "Allow ECS task execution role to read Steam SSFN from SSM parameter when referenced by name."
+  policy      = data.aws_iam_policy_document.teamcity_task_execution_ssm_policy[0].json
+}
+
+resource "aws_iam_role_policy_attachment" "teamcity_task_execution_ssm_policy" {
+  count      = var.create_aws_connection_role && var.create_steam_auth ? 1 : 0
+  role       = aws_iam_role.teamcity_task_execution_role.name
+  policy_arn = aws_iam_policy.teamcity_task_execution_ssm_policy[0].arn
+}
 
 # CloudWatch Logs
 resource "aws_cloudwatch_log_group" "teamcity_log_group" {

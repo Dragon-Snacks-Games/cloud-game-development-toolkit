@@ -6,13 +6,18 @@ data "aws_secretsmanager_secret_version" "steam_ssfn" {
   secret_id = var.steam_ssfn_secret_id
 }
 
-# Local values to inject the secret into ECS tasks as an environment variable
-locals {
-  steam_secrets = var.steam_ssfn_secret_id != null ? [
-    {
-      name      = "STEAM_SSFN_CONTENT"
-      # When the secret contains the entire config.vdf in SecretString, no JSON key suffix is required
-      valueFrom = data.aws_secretsmanager_secret_version.steam_ssfn[0].arn
-    }
-  ] : []
+
+# Resource to create a new (empty) Secrets Manager secret for Steam SSFN
+# The secret's value must be manually set in AWS Secrets Manager after creation.
+resource "aws_secretsmanager_secret" "steam_ssfn" {
+  count       = var.create_steam_auth ? 1 : 0
+  name        = local.steam_ssfn_secret_name
+  description = "Steam SSFN data for TeamCity (value must be manually set after creation)"
+  tags        = local.tags
+
+  # Add lifecycle rule to prevent accidental deletion of a non-empty secret
+  lifecycle {
+    prevent_destroy = true
+  }
 }
+

@@ -41,8 +41,31 @@ locals {
       value = local.database_master_password
     }
   ] : []
+
+  steam_ssfn_secret_name = var.create_steam_auth ? (
+    var.steam_secret_name != null ? var.steam_secret_name : "${local.name_prefix}-steam-ssfn-secret"
+  ) : null
+
+  steam_ssfn_secret_arn = var.create_steam_auth ? (
+    one(aws_secretsmanager_secret.steam_ssfn[*].arn)
+  ) : (
+    var.steam_ssfn_secret_id != null ? data.aws_secretsmanager_secret_version.steam_ssfn[0].arn : null
+  )
+
+  # For ECS task definitions, we can safely reference the secret by name when we create it,
+  # which is known at plan time and avoids making container_definitions unknown.
+  steam_ssfn_secret_valuefrom = local.steam_ssfn_secret_arn
+
+  steam_secrets = local.steam_ssfn_secret_valuefrom != null ? [
+    {
+      name      = "STEAM_SSFN_CONTENT"
+      valueFrom = local.steam_ssfn_secret_valuefrom
+    }
+  ] : []
 }
 data "aws_region" "current" {}
+
+data "aws_caller_identity" "current" {}
 
 # Data source to look up existing EFS file system if ID is provided
 data "aws_efs_file_system" "efs_file_system" {
