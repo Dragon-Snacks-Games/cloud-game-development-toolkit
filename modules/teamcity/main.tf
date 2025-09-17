@@ -38,7 +38,7 @@ resource "aws_ecs_task_definition" "teamcity_task_definition" {
   memory                   = var.container_memory
 
   container_definitions = jsonencode([
-    {
+    merge({
       name      = var.container_name
       image     = local.image
       cpu       = var.container_cpu
@@ -53,14 +53,6 @@ resource "aws_ecs_task_definition" "teamcity_task_definition" {
           protocol      = "tcp"
         }
       ]
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = aws_cloudwatch_log_group.teamcity_log_group.name
-          awslogs-region        = data.aws_region.current.name
-          awslogs-stream-prefix = "[APP]"
-        }
-      }
 
       mountPoints = [
         {
@@ -83,7 +75,16 @@ resource "aws_ecs_task_definition" "teamcity_task_definition" {
         local.plastic_secrets,
         local.steam_secrets
       )
-    }
+    }, var.enable_server_cloudwatch_logs ? {
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.teamcity_log_group.name
+          awslogs-region        = data.aws_region.current.name
+          awslogs-stream-prefix = "[APP]"
+        }
+      }
+    } : {})
   ])
   tags = {
     Name = var.name
@@ -157,12 +158,15 @@ resource "aws_ecs_service" "teamcity" {
       }
     }
 
-    log_configuration {
-      log_driver = "awslogs"
-      options = {
-        awslogs-group         = aws_cloudwatch_log_group.teamcity_log_group.name
-        awslogs-region        = data.aws_region.current.name
-        awslogs-stream-prefix = "[CONNECT]"
+    dynamic "log_configuration" {
+      for_each = var.enable_server_cloudwatch_logs ? [1] : []
+      content {
+        log_driver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.teamcity_log_group.name
+          awslogs-region        = data.aws_region.current.name
+          awslogs-stream-prefix = "[CONNECT]"
+        }
       }
     }
   }

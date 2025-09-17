@@ -95,6 +95,18 @@ variable "teamcity_cloudwatch_log_retention_in_days" {
   default     = 365
 }
 
+variable "enable_server_cloudwatch_logs" {
+  type        = bool
+  description = "Enable CloudWatch logs for the TeamCity server container and related service logging."
+  default     = true
+}
+
+variable "enable_agent_cloudwatch_logs" {
+  type        = bool
+  description = "Enable CloudWatch logs for TeamCity agent containers and related service logging."
+  default     = true
+}
+
 ########################################
 # EFS Configuration
 ########################################

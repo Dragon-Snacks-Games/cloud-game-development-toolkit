@@ -121,6 +121,8 @@ No modules.
 | <a name="input_efs_id"></a> [efs\_id](#input\_efs\_id) | The ID of the EFS file system to use for the TeamCity service. | `string` | `null` | no |
 | <a name="input_enable_teamcity_alb_access_logs"></a> [enable\_teamcity\_alb\_access\_logs](#input\_enable\_teamcity\_alb\_access\_logs) | Enables access logging for the TeamCity ALB. Defaults to true. | `bool` | `true` | no |
 | <a name="input_enable_teamcity_alb_deletion_protection"></a> [enable\_teamcity\_alb\_deletion\_protection](#input\_enable\_teamcity\_alb\_deletion\_protection) | Enables deletion protection for the TeamCity ALB. Defaults to true. | `bool` | `false` | no |
+| <a name="input_enable_agent_cloudwatch_logs"></a> [enable_agent_cloudwatch_logs](#input_enable_agent_cloudwatch_logs) | Enable CloudWatch logs for TeamCity agent containers and related service logging. | `bool` | `true` | no |
+| <a name="input_enable_server_cloudwatch_logs"></a> [enable_server_cloudwatch_logs](#input_enable_server_cloudwatch_logs) | Enable CloudWatch logs for the TeamCity server container and related service logging. | `bool` | `true` | no |
 | <a name="input_environment"></a> [environment](#input\_environment) | The current environment (e.g. dev, prod, etc.) | `string` | `"dev"` | no |
 | <a name="input_name"></a> [name](#input\_name) | The name applied to resources in the TeamCity module | `string` | `"teamcity"` | no |
 | <a name="input_service_subnets"></a> [service\_subnets](#input\_service\_subnets) | The subnets in which the TeamCity server service will be deployed | `list(string)` | n/a | yes |

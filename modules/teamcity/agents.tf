@@ -16,7 +16,7 @@ resource "aws_ecs_task_definition" "teamcity_agent" {
   execution_role_arn       = aws_iam_role.teamcity_agent_task_execution_role.arn
   task_role_arn            = aws_iam_role.teamcity_agent_default_role.arn
   container_definitions = jsonencode([
-    {
+    merge({
       name      = "teamcity-agent"
       image     = each.value.image
       cpu       = each.value.cpu
@@ -33,6 +33,7 @@ resource "aws_ecs_task_definition" "teamcity_agent" {
         }
       ], local.plastic_env)
       secrets = concat(local.plastic_secrets, local.steam_secrets)
+    }, var.enable_agent_cloudwatch_logs ? {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -41,7 +42,7 @@ resource "aws_ecs_task_definition" "teamcity_agent" {
           "awslogs-stream-prefix" = "[AGENT - ${each.key}]"
         }
       }
-    }
+    } : {})
   ])
 }
 
@@ -66,12 +67,15 @@ resource "aws_ecs_service" "teamcity_agent" {
     enabled   = true
     namespace = aws_service_discovery_http_namespace.teamcity[0].arn
 
-    log_configuration {
-      log_driver = "awslogs"
-      options = {
-        "awslogs-group"         = aws_cloudwatch_log_group.teamcity_agent.name
-        "awslogs-region"        = data.aws_region.current.name
-        "awslogs-stream-prefix" = "[AGENT - ${each.key}]"
+    dynamic "log_configuration" {
+      for_each = var.enable_agent_cloudwatch_logs ? [1] : []
+      content {
+        log_driver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.teamcity_agent.name
+          "awslogs-region"        = data.aws_region.current.name
+          "awslogs-stream-prefix" = "[AGENT - ${each.key}]"
+        }
       }
     }
   }
