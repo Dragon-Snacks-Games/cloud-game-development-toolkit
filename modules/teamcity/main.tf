@@ -116,6 +116,7 @@ resource "aws_ecs_service" "teamcity" {
   desired_count          = var.desired_container_count
   force_new_deployment   = var.debug
   enable_execute_command = var.debug
+  health_check_grace_period_seconds = var.health_check_grace_period
 
   //The databases were breaking because the tasks would cycle out,
   // meaning that when one was terminating, another one would be booting up.
@@ -128,7 +129,7 @@ resource "aws_ecs_service" "teamcity" {
 
   wait_for_steady_state = false #TODO: make this configurable
 
-  network_configuration {
+   network_configuration {
     subnets         = var.service_subnets
     security_groups = [aws_security_group.teamcity_service_sg.id]
   }
@@ -654,7 +655,6 @@ resource "aws_lb_target_group" "teamcity_target_group" {
     protocol            = "HTTP"
     matcher             = "200"
   }
-
   tags = local.tags
 }
 

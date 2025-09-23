@@ -263,6 +263,9 @@ variable "create_aws_connection_role" {
   default     = true
 }
 
+variable "health_check_grace_period" {
+  default = "0"
+}
 
 ########################################
 ### PlasticSCM Configuration
