@@ -729,7 +729,7 @@ resource "aws_rds_cluster" "teamcity_db_cluster" {
   cluster_identifier          = "teamcity-cluster"
   engine                      = "aurora-postgresql"
   engine_mode                 = "provisioned"
-  engine_version              = "16.15" #check for latest as option
+  engine_version              = "16.11" #check for latest as option
   database_name               = "teamcity"
   master_username             = "teamcity"
   manage_master_user_password = true #using AWS Secrets Manager
