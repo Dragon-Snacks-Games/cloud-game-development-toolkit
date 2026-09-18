@@ -644,6 +644,7 @@ resource "aws_lb_target_group" "teamcity_target_group" {
   protocol    = "HTTP"
   vpc_id      = var.vpc_id
   target_type = "ip"
+  deregistration_delay = 30
 
   health_check {
     path                = "/healthCheck/healthy"
